@@ -106,14 +106,7 @@ class Parser:
                     # TODO: func definition
                 elif value.startswith('var'):
                     self.parseAssignment()
-
-
-    def parseExpression(self):
-        
-
-    def parseAssignment(self):
-        pass
-
+                    
 
 if __name__ == '__main__':
     main()

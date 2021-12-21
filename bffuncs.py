@@ -52,7 +52,7 @@ class BrainFuck:
         self.allocd.pop(adr)
 
 
-    def mov(self, adr):
+    def movptr(self, adr):
         """
         Moves pointer to the address `adr`.
         """
@@ -67,7 +67,7 @@ class BrainFuck:
         """
         Sets cell at `adr` to the value `val`.
         """
-        self.mov(adr)
+        self.movptr(adr)
         print('[-]', end='')        # Sets cell to zero
         print('+' * val)            # Sets cell to `val`
 
@@ -100,7 +100,7 @@ class BrainFuck:
     # mov(a1)
 
 
-    def memcpy(self, src, dest):
+    def cpy(self, src, dest):
         """
         Copies the value at `src` into `dest`.
         """
@@ -109,21 +109,21 @@ class BrainFuck:
         temp = self.calloc(1)
         self.setval(dest, 0)
         # Sets `dest` and `temp` to `src` and `src` to zero
-        self.mov(src)
+        self.movptr(src)
         print('[-', end='')
-        self.mov(dest)
+        self.movptr(dest)
         print('+', end='')
-        self.mov(temp)
+        self.movptr(temp)
         print('+', end='')
-        self.mov(src)
+        self.movptr(src)
         print(']')
 
         # Sets `src` to `temp` and `temp` to zero
-        self.mov(temp)
+        self.movptr(temp)
         print('[-', end='')
-        self.mov(src)
+        self.movptr(src)
         print('+', end='')
-        self.mov(temp)
+        self.movptr(temp)
         print(']')
         # Deallocates `temp`
         self.dealloc(temp)
@@ -143,36 +143,28 @@ class BrainFuck:
     def putv(self, varname):
         if varname not in self.env:
             raise KeyError(f'variable {varname} was not defined')
-        self.mov(self.env[varname])
+        self.movptr(self.env[varname])
         print('.', end='')
 
 
-    def add(self, adr1, adr2, out):
+    def add(self, lhs, rhs, out):
         """
         Adds the value at `adr1` to `adr2` and writes it to `out`.
         """
+        if lhs is str:
+            lhs = self.env[lhs]
+        if rhs is str: 
+            rhs = self.env[lhs]
         left = self.malloc(1)
         right = self.malloc(1)
-        self.memcpy(adr1, left)
-        self.memcpy(adr2, right)
-        self.memcpy(left, out)
-        self.mov(right)
+        self.cpy(lhs, left)
+        self.cpy(rhs, right)
+        self.cpy(left, out)
+        self.movptr(right)
         print('[-', end='')
-        self.mov(out)
+        self.movptr(out)
         print('+', end='')
-        self.mov(right)
+        self.movptr(right)
         print(']')
         self.dealloc(left)
         self.dealloc(right)
-
-
-    def addvars(self, var1, var2, outvar):
-        if var1 not in self.env:
-            raise KeyError(f'variable {var1} was not defined')
-        if var2 not in self.env:
-            raise KeyError(f'variable {var2} was not defined')
-        if outvar not in self.env:
-            raise KeyError(f'variable {outvar} was not defined')
-        adr1, adr2, adr3 = self.env[var1], self.env[var2], self.env[outvar]
-        self.add(adr1, adr2, adr3)
-        
