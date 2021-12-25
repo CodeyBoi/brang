@@ -1,9 +1,0 @@
-set a 10
-set b 23
-add a b
-putc b
-mul 5 a
-putc a
-sub 5 a
-putc a
-putc '\n'

@@ -2,8 +2,9 @@ use std::io::Read;
 
 use token::tokenize;
 
-mod compiler;
+mod parse;
 mod token;
+mod interpret;
 
 fn main() {
     let mut program = String::with_capacity(8192);
@@ -16,5 +17,7 @@ fn main() {
     let root = token::parse(tokens);
     token::print_tree(&root);
 
-    compiler::to_bf(root, "../b.assem").unwrap();
+    parse::to_brainfuck(root, "tests/b.assem").unwrap();
+
+    interpret::run("tests/b.assem");
 }
