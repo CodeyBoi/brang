@@ -17,7 +17,7 @@ fn main() {
     let root = token::parse(tokens);
     token::print_tree(&root);
 
-    parse::to_brainfuck(root, "tests/b.assem").unwrap();
+    parse::to_brainfuck(root, "tests/b.bf").unwrap();
 
-    interpret::run("tests/b.assem");
+    interpret::run("tests/b.bf");
 }
