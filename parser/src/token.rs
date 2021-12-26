@@ -1,4 +1,5 @@
 use std::collections::VecDeque;
+use std::fmt;
 
 use crate::parse::num;
 use regex::Regex;
@@ -6,7 +7,10 @@ use Token::*;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Token {
+    // Std functions
     Print,
+    GetLine,
+    GetChar,
     // Signatures
     FuncSig,
     VarSig,
@@ -14,7 +18,6 @@ pub enum Token {
     Branch,
     If,
     Else,
-    ElseIf,
     // Loops
     While,
     For,
@@ -118,34 +121,36 @@ impl BiOp {
 }
 
 pub fn tokenize(program: String) -> VecDeque<Token> {
-    let patterns: [(Token, &'static str); 21] = [
+    let patterns: [(Token, &'static str); 22] = [
+        // Std functions
+        (Print,                     r"print\s"),
+        (GetLine,                   r"input\(\)"),
+        (GetChar,                   r"getchar\(\)"),
         // Keywords
-        (Print,     r"print\s"),
-        (FuncSig, r"fun\s"),
-        (VarSig, r"var\s"),
-        (ElseIf, r"else if\s"),
-        (If, r"if\s"),
-        (Else, r"else\s"),
-        (While, r"while\s"),
-        (For, r"for\s"),
+        (FuncSig,                   r"fun\s"),
+        (VarSig,                    r"var\s"),
+        (If,                        r"if\s"),
+        (Else,                      r"else\s"),
+        (While,                     r"while\s"),
+        (For,                       r"for\s"),
         // Literals
-        (NumLit(0), r"\d+"),
+        (NumLit(0),                 r"\d+"),
         (StrLit("".to_string()),    r#"("[^"]*"|'[^']*')"#),
         // Identifiers
         (Ident("".to_string()),     r"[\pL][\pL\d]*"),
         // Unary operators
-        (Not, r"!"),
+        (Not,                       r"!"),
         // Binary operators
-        (BinOp(BiOp::Invalid), r"(==|!=|<=|>=|<|>|\^|\+|-|\*|/)"),
-        (Assign, r"="),
+        (BinOp(BiOp::Invalid),      r"(==|!=|<=|>=|<|>|\^|\+|-|\*|/)"),
+        (Assign,                    r"="),
         // Syntax tokens
-        (LBracket, r"\{"),
-        (RBracket, r"\}"),
-        (LParent, r"\("),
-        (RParent, r"\)"),
-        (Semicolon, r";"),
-        (Comment("".to_string()), r"#.*"),
-        (Whitespace, r"\s+"),
+        (LBracket,                  r"\{"),
+        (RBracket,                  r"\}"),
+        (LParent,                   r"\("),
+        (RParent,                   r"\)"),
+        (Semicolon,                 r";"),
+        (Comment("".to_string()),   r"#.*"),
+        (Whitespace,                r"\s+"),
     ];
 
     let mut tokens = VecDeque::new();
@@ -196,7 +201,7 @@ pub fn tokenize(program: String) -> VecDeque<Token> {
 #[derive(Debug)]
 pub struct Node {
     pub token: Token,
-    pub children: Vec<Node>, // 0: lhs, 1: rhs, ...
+    pub children: Vec<Node>,
 }
 
 impl Node {
@@ -209,22 +214,31 @@ impl Node {
     }
 }
 
-pub fn print_tree(node: &Node) {
-    fn print_tree_recur(node: &Node, indent: &str, last: bool) {
-        let indent = if last {
-            println!("{}└╴{:?}", indent, node.token);
-            format!("{}  ", indent)
-        } else {
-            println!("{}├╴{:?}", indent, node.token);
-            format!("{}│ ", indent)
-        };
-        for (i, child) in node.children.iter().enumerate() {
-            print_tree_recur(child, &indent, i == node.children.len() - 1);
+impl fmt::Display for Node {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fn fmt_tree_recur(
+            f: &mut fmt::Formatter<'_>, 
+            node: &Node, 
+            indent: &str, 
+            last: bool
+        ) -> fmt::Result {
+            let indent = if last {
+                writeln!(f, "{}└╴{:?}", indent, node.token)?;
+                format!("{}  ", indent)
+            } else {
+                writeln!(f, "{}├╴{:?}", indent, node.token)?;
+                format!("{}│ ", indent)
+            };
+            for (i, child) in node.children.iter().enumerate() {
+                fmt_tree_recur(f, child, &indent, i == node.children.len() - 1)?;
+            }
+            Ok(())
         }
-    }
-    println!("{:?}", node.token);
-    for (i, child) in node.children.iter().enumerate() {
-        print_tree_recur(child, "", i == node.children.len() - 1);
+        writeln!(f, "{:?}", self.token)?;
+        for (i, child) in self.children.iter().enumerate() {
+            fmt_tree_recur(f, child, "", i == self.children.len() - 1)?;
+        }
+        Ok(())
     }
 }
 
@@ -237,31 +251,15 @@ pub fn parse(mut tokens: VecDeque<Token>) -> Node {
 }
 
 fn parse_next(tokens: &mut VecDeque<Token>) -> Option<Node> {
-    println!("--- TOKENS ---\n{:?}\n", tokens);
     while let Some(token) = tokens.front() {
         match token {
-            If => return Some(parse_if(tokens)),
+            If => return Some(parse_branch(tokens)),
             VarSig | Ident { .. } => return Some(parse_assign(tokens)),
-            Print => {
-                let token = tokens.pop_front().unwrap();
-                if let Some(StrLit(_)) = tokens.front() {
-                    // TODO: Substitute with `parse_string_expr`
-                    let strlit = Node::leaf(tokens.pop_front().unwrap());
-                    tokens.pop_front();
-                    return Some(Node::new(token, vec![strlit]));
-                } else {
-                    let expr = parse_numeric_expr(tokens);
-                    return Some(Node::new(token, vec![expr]));
-                }
-            }
+            Print => return Some(parse_print(tokens)),
             Else => {
                 eprintln!("else-statement must come after an if-statement");
                 return None;
             },
-            ElseIf => {
-                eprintln!("else if-statement must come after an if-statement");
-                return None;
-            }
             RBracket => {
                 tokens.pop_front();
                 return None;
@@ -276,36 +274,44 @@ fn parse_next(tokens: &mut VecDeque<Token>) -> Option<Node> {
     None
 }
 
-fn parse_if(tokens: &mut VecDeque<Token>) -> Node {
-    let mut children = Vec::new();
+fn parse_branch(tokens: &mut VecDeque<Token>) -> Node {
+    let mut children = Vec::with_capacity(3);
     children.push(parse_numeric_expr(tokens));
-    if let Some(n) = parse_next(tokens) {
-        children.push(n);
+    
+    let mut body = Vec::new();
+    while let Some(n) = parse_next(tokens) {
+        body.push(n);
+    }
+    children.push(Node::new(If, body));
+
+    if let Some(Else) = tokens.front() {
+        children.push(parse_else(tokens));        
     } else {
-        children.push(Node::leaf(Whitespace));
+        children.push(Node::leaf(Else));
     }
-    match tokens.front() {
-        Some(Else) | Some(ElseIf) => children.push(parse_else(tokens)),
-        _ => (),
-    }
+
     Node::new(Branch, children)
 }
 
 fn parse_else(tokens: &mut VecDeque<Token>) -> Node {
-    let token = tokens.pop_front().unwrap();
-    match token {
-        Else => {
-            todo!("else");
-        },
-        ElseIf => {
-            todo!("else if")
+    tokens.pop_front();
+    let mut body = Vec::new();
+    match tokens.front() {
+        Some(If) => body.push(parse_branch(tokens)),
+        Some(LBracket) => {
+            tokens.pop_front();
+            while let Some(n) = parse_next(tokens) {
+                body.push(n);
+            }
         },
         _ => panic!("expected else- or else if-statement"),
     }
+
+    Node::new(Else, body)
 }
 
 fn parse_assign(tokens: &mut VecDeque<Token>) -> Node {
-    let variable = if &VarSig == tokens.front().unwrap() {
+    let variable = if Some(&VarSig) == tokens.front() {
         tokens.pop_front();
         Node::leaf(tokens.pop_front().unwrap())
     } else {
@@ -359,56 +365,15 @@ fn parse_numeric_expr(tokens: &mut VecDeque<Token>) -> Node {
     Node::new(Expr, rpn_expr)
 }
 
-// fn parse_numeric_expr_old(tokens: &mut VecDeque<Token>) -> Node {
-//     let mut nodes = Vec::new();
-//     let mut ops = Vec::new();
-//     while let Some(token) = tokens.pop_front() {
-//         match token {
-//             NumLit(_) => nodes.push(Node::leaf(token)),
-//             Ident { .. } => nodes.push(Node::leaf(token)),
-//             BinOp(op) => {
-//                 while let Some(BinOp(other_op)) = ops.last() {
-//                     if (BiOp::is_assoc(op) && BiOp::prio(op) <= BiOp::prio(*other_op))
-//                         || (!BiOp::is_assoc(op) && BiOp::prio(op) < BiOp::prio(*other_op))
-//                     {
-//                         let op = ops.pop().unwrap();
-//                         let rhs = nodes.pop()
-//                             .expect("operator has no right hand operand");
-//                         let lhs = nodes.pop()
-//                             .expect("operator has no left hand operand");
-//                         nodes.push(Node::new(op, vec![lhs, rhs]));
-//                     } else {
-//                         break;
-//                     }
-//                 }
-//                 ops.push(token);
-//             }
-//             LParent => ops.push(token),
-//             RParent => {
-//                 while let Some(op) = ops.pop() {
-//                     if op == LParent {
-//                         break;
-//                     } else {
-//                         let rhs = nodes.pop().expect("operator has no right hand operand");
-//                         let lhs = nodes.pop().expect("operator has no left hand operand");
-//                         nodes.push(Node::new(op, vec![lhs, rhs]));
-//                     }
-//                 }
-//             }
-//             Semicolon | LBracket | RBracket => break,
-//             _ => (),
-//         }
-//     }
-
-//     while let Some(op) = ops.pop() {
-//         let rhs = nodes.pop().expect("operator has no right hand operand");
-//         let lhs = nodes.pop().expect("operator has no left hand operand");
-//         nodes.push(Node::new(op, vec![lhs, rhs]));
-//     }
-
-//     if nodes.len() == 1 {
-//         nodes.pop().unwrap()
-//     } else {
-//         panic!("invalid expression");
-//     }
-// }
+fn parse_print(tokens: &mut VecDeque<Token>) -> Node {
+    let token = tokens.pop_front().unwrap();
+    if let Some(StrLit(_)) = tokens.front() {
+        // TODO: Substitute with `parse_string_expr`
+        let strlit = Node::leaf(tokens.pop_front().unwrap());
+        tokens.pop_front();
+        Node::new(token, vec![strlit])
+    } else {
+        let expr = parse_numeric_expr(tokens);
+        Node::new(token, vec![expr])
+    }
+}

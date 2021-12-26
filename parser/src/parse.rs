@@ -1,20 +1,16 @@
-use std::{
-    collections::HashMap, 
-    io::Write, 
-    fs::OpenOptions,
-};
+use std::collections::HashMap;
+use std::io::Write;
+use std::fs::OpenOptions;
 
 pub(crate) use u8 as num;
 
 use crate::token::Node;
 use crate::token::Token;
 
-pub fn to_brainfuck(input: Node, output: &str) -> Result<(), std::io::Error> {
+pub fn to_brainfuck(root: Node, output: &str) -> Result<(), std::io::Error> {
     let mut c = Parser::new();
     
-    for n in &input.children {
-        c.process_node(n);
-    }
+    c.process_node(&root);
 
     let mut file = OpenOptions::new()
         .write(true)
@@ -33,19 +29,6 @@ struct Parser {
     out:    String,
 }
 
-/**
- * Preferred instruction set
- * set dest const   // sets the value at `dest` to `const`
- * cpy src dest     // copies memory from `src` to `dest`
- * 
- * add lhs rhs      // adds `lhs` to `rhs` and writes to `rhs`
- * sub lhs rhs      // same, but subtraction
- * mul lhs rhs      // same, but multiplication
- * 
- * cmp lhs rhs
- * jmp label        // jumps to label (prob have to implement by inlining)
- */
-
 impl Parser {
 
     const ARRAY_SIZE: usize = 30_000;
@@ -54,12 +37,44 @@ impl Parser {
 
     fn process_node(&mut self, node: &Node) {
         use Token::*;
-        match node {
-            Node { token: If | Else | ElseIf | While | For, .. } => self.process_block(node),
-            Node { token: Assign, .. }                           => self.process_assign(node),
-            Node { token: Print, ..}                             => self.process_print(node),
-            _ => unimplemented!("{:?}", node.token),
+        for n in &node.children {
+            match n {
+                Node { token: Branch, .. } => self.process_branch(n),
+                Node { token: Assign, .. } => self.process_assign(n),
+                Node { token: Print,  .. } => self.process_print(n),
+                _ => unimplemented!("{:?}", n.token),
+            }
         }
+    }
+
+    fn process_branch(&mut self, node: &Node) {
+        let expr = &node.children[0];
+        let if_body = &node.children[1];
+        let else_body = &node.children[2];
+
+        // `if_flag` and `else_flag` decides which bodies to run
+        let if_flag = self.malloc(2);
+        let else_flag = if_flag + 1;
+        self.set(else_flag, 1);
+
+        // write expression result into `if_flag`
+        self.process_expr_node(expr, if_flag);
+
+        // if `if_flag` is non zero then set `if_flag` and `else_flag` to zero
+        self.mov(if_flag);
+        self.out.push_str("[[-]>-<");
+        self.process_node(if_body);
+        self.mov(if_flag);
+        self.out.push(']');
+
+        // if `else_flag` is non zero then run else body
+        self.mov(else_flag);
+        self.out.push_str("[-");
+        self.process_node(else_body);
+        self.mov(else_flag);
+        self.out.push(']');
+
+        self.dealloc(if_flag);
     }
 
     fn process_assign(&mut self, node: &Node) {
@@ -73,9 +88,8 @@ impl Parser {
     /// Then writes that value to `result`, which is assumed to be zeroed.
     fn process_expr_node(&mut self, node: &Node, result: usize) {
         use Token::*;
-        match node.token {
-            Expr => (),
-            _ => panic!("expression node does not have the type Expr"),
+        if node.token != Expr {
+            panic!("expression node does not have the type Expr");
         }
 
         let stack = self.malloc(node.children.len() / 2 + 1);
@@ -134,45 +148,10 @@ impl Parser {
         self.dealloc(stack);
     }
 
-    fn process_block(&mut self, node: &Node) {
-        use Token::*;
-        match &node.token {
-            If => self.process_if(node),
-            While => todo!(),
-            For => todo!(),
-            ElseIf => eprintln!("Error: if-statement must come before else if-statement"),
-            Else => eprintln!("Error: if-statement must come before else-statement"),
-            _ => eprintln!("Error: invalid token for beginning of conditional block"),
-        }
-    }
-
-    fn process_if(&mut self, node: &Node) {
-        let flag = self.malloc(2);
-        let else_flag = flag + 1;
-        self.set(else_flag, 1);
-        if let Some(expr) = node.children.first() {
-            self.process_expr_node(expr, flag);
-        } else { eprintln!("Error: no conditional expression after if-statement") }
-        self.mov(flag);
-
-        // zeroes `flag` and `else_flag` if expression is true
-        self.out.push_str("[[-]>-<");
-        
-        // processes rest of nodes
-        for child in node.children.iter().skip(1) {
-            self.process_node(child);
-        }
-
-        self.out.push(']');
-    }
-
     fn process_print(&mut self, node: &Node) {
         use Token::*;
         let child_node = node.children.first().unwrap();
         match &child_node.token {
-            NumLit(v) => {
-                
-            },
             StrLit(s) => {
                 let temp = self.calloc(1);
                 let mut last_c = 0_u8;
@@ -260,7 +239,7 @@ impl Parser {
         if let Some(temp) = self.env.get(name) {
             *temp
         } else {
-            let temp = self.malloc(1);
+            let temp = self.calloc(1);
             self.env.insert(name.to_string(), temp);
             temp
         }
@@ -372,8 +351,7 @@ impl Parser {
     /// Computes the difference between `lhs` and `rhs` and writes to `rhs`
     /// (`rhs = rhs - lhs`). 
     /// 
-    /// Consumes both operands, e.g. they are both 
-    /// unusable after this operation.
+    /// Consumes both operands, e.g. they are both unusable after this operation.
     fn consuming_sub(&mut self, lhs: usize, rhs: usize) {
         self.mov(lhs);
         self.out.push_str("[-");
@@ -410,75 +388,90 @@ impl Parser {
         self.dealloc(temp);
     }
 
+    /// Writes a 1 to `adr` if it's zero, and 0 otherwise. Assumes wrapping.
+    fn not(&mut self, adr: usize) {
+        let temp = self.calloc(1);
+
+        // Sets `temp` to 1 if `adr` is zero, and 0 otherwise. Also zeroes `adr`.
+        self.mov(adr);
+        self.out.push_str("[[-]");
+        self.mov(temp);
+        self.out.push('-');
+        self.mov(adr);
+        self.out.push(']');
+        self.mov(temp);
+        self.out.push('+');
+
+        // Moves value from `temp` to `adr`.
+        self.out.push_str("[-");
+        self.mov(adr);
+        self.out.push('+');
+        self.mov(temp);
+        self.out.push(']');
+
+        self.dealloc(temp);
+    }
+
     /// Tests if `lhs` and `rhs` are equal.
-    /// Will set a cell to 0 or 1 and end with the pointer on that cell.
-    /// 
-    /// NOTE! This cell will not be alloc'd, so use it immediately.
+    /// Will set `rhs` to 0 or 1.
     fn eq(&mut self, lhs: usize, rhs: usize) {
-        let result = self.calloc(1);
+        let temp = self.calloc(1);
 
         // writes `lhs - rhs` into `temp`,
-        self.cpy(lhs, result);    
-        self.consuming_sub(rhs, result);
-        self.mov(result);
+        self.cpy(lhs, temp);    
+        self.consuming_sub(temp, rhs);
+        self.not(rhs);
 
-        // sets result to 0 if `temp` != 0, and sets `temp` to zero
-        self.out.push_str("[[-]");
-        self.mov(rhs);
-        self.out.push('-');
-        self.mov(result);
-        self.out.push(']');
-        self.mov(rhs);
-        self.out.push('+');
-        self.dealloc(result);
+        self.dealloc(temp);
     }
 
     /// Tests if `lhs` and `rhs` are not equal.
-    /// Will set a cell to 0 or 1 and end with the pointer on that cell.
-    /// 
-    /// NOTE! This cell will not be alloc'd, so use it immediately.
+    /// Will set `rhs` to 0 or 1.
     fn neq(&mut self, lhs: usize, rhs: usize) {
-        self.eq(lhs, rhs);                  // tests if `lhs` and `rhs` are equal
-        self.out.push_str("[[-]-]+");       // negates the result, assumes wrapping
+        self.eq(lhs, rhs);          // tests if `lhs` and `rhs` are equal
+        self.not(rhs);              // negates the result
     }
 
     /// Tests if `lhs` is greater or equal to `rhs`.
-    /// Will set a cell to 0 or 1 and end with the pointer on that cell.
-    /// 
-    /// NOTE! This cell will not be alloc'd, so use it immediately.
+    /// Will set `rhs` to either 1 or 0.
     fn geq(&mut self, lhs: usize, rhs: usize) {
-        let result = self.malloc(6);        // initial layout: [0 1 0 a b 0]
-        self.set(result + 1, 1);
+        //                      v
+        // initial layout: [0 1 0 a b 0]
+        let result = self.malloc(6);
         let a = result + 3;
         let b = result + 4;
 
+        self.set(result, 0);
+        self.set(result + 1, 1);
+        self.set(result + 2, 0);
         self.cpy(lhs, a);
         self.cpy(rhs, b);
-        self.mov(a);
+        self.set(result + 5, 0);
 
+        self.mov(a);
         self.out.push_str("+>+<");          // to handle the cases `a=0` and `b=0`
-        self.out.push_str("[->-[>]<<]<");   // ends on `result + 2` if `a>=b`, else `result + 3`
-        self.out.push_str("[-<+>]");        // sets `result` to 1 if `a>=b`
-        self.out.push_str("<[-<]");         // moves to `result` (second block is in case of `a<b`)
+        self.out.push_str("[->-[>]<<]<");   // ends on `result + 1` if `a>=b`, else `result + 2`
+        self.out.push_str("[<+>>]<<");      // sets `result` to 1 if `a>=b` and moves to result
         self.ptr = result;                  // set `ptr` manually
         self.movval(result, rhs);           // writes `result` to `rhs`
-        self.dealloc(result);               // at end array is [result 0 0 X X 0]
+        self.dealloc(result);               // at end array is [result 1 0 X X 0]
     }
 
 
     /// Tests if `lhs` is greater than `rhs`.
     /// Will set `rhs` to 0 or 1.
     fn gt(&mut self, lhs: usize, rhs: usize) {
-        self.leq(lhs, rhs);                 // tests if `lhs` is less or equal to `rhs`
-        self.out.push_str("[[-]-]+");       // negates the result, assumes wrapping
+        self.leq(lhs, rhs);         // tests if `lhs` is less or equal to `rhs`
+        self.not(rhs);              // negates the result
     }
 
     /// Tests if `lhs` is less or equal to `rhs`.
-    /// Will set a cell to 0 or 1 and end with the pointer on that cell
-    /// 
-    /// NOTE! This cell will not be alloc'd, so use it immediately.
+    /// Will set `rhs` to 0 or 1.
     fn leq(&mut self, lhs: usize, rhs: usize) {
-        self.geq(rhs, lhs);
+        let temp = self.malloc(1);
+        self.cpy(lhs, temp);
+        self.geq(rhs, temp);
+        self.movval(temp, rhs);
     }
 
     /// Tests if `lhs` is less than `rhs`.
@@ -486,147 +479,8 @@ impl Parser {
     /// 
     /// NOTE! This cell will not be alloc'd, so use it immediately.
     fn lt(&mut self, lhs: usize, rhs: usize) {
-        self.geq(lhs, rhs);                 // tests if `lhs` is greater or equal to `rhs`
-        self.out.push_str("[[-]-]+");       // negates the result, assumes wrapping        
+        self.geq(lhs, rhs);         // tests if `lhs` is greater or equal to `rhs`
+        self.not(rhs);              // negates the result
     }
-
-    // fn parse_set(&mut self, lhs: &str, rhs: &str) {
-    //     let dest = if lhs.parse::<usize>().is_ok() {
-    //         panic!("lhs in set can't be a constant value");
-    //     } else if let Some(adr) = self.env.get(lhs) {
-    //         *adr
-    //     } else if lhs.chars().next().unwrap().is_alphabetic() {
-    //         let adr = self.alloc(1);
-    //         self.env.insert(lhs.to_string(), adr);
-    //         adr
-    //     } else {
-    //         panic!("invalid variable name for dest \
-    //             (must start with letter)");
-    //     };
-    //     if let Ok(v) = rhs.parse::<num>() {
-    //         self.set(dest, v);
-    //     } else {
-    //         panic!("rhs in set must be a constant value");
-    //     }
-        
-    // }
-
-    // fn parse_cpy(&mut self, lhs: &str, rhs: &str) {
-    //     let dest = if rhs.parse::<num>().is_ok() {
-    //         panic!("cannot input number as dest for mov");
-    //     } else if let Some(adr) = self.env.get(rhs) {
-    //         *adr
-    //     } else {
-    //         let adr = self.alloc(1);
-    //         self.env.insert(rhs.to_string(), adr);
-    //         adr
-    //     };
-        
-    //     if let Ok(value) = lhs.parse::<num>() {
-    //         self.set(dest, value);
-    //     } else if let Some(adr) = self.env.get(lhs) {
-    //         let src = *adr;
-    //         if src == dest {
-    //             panic!("can't copy a memory location to itself");
-    //         }
-    //         self.cpy(src, dest);
-    //     } else { panic!("src parameter is undefined"); };   
-    // }
-
-    // fn parse_add(&mut self, lhs: &str, rhs: &str) {
-    //     let rhs = if rhs.parse::<num>().is_ok() {
-    //         panic!("cannot input number as dest for add");
-    //     } else if let Some(adr) = self.env.get(rhs) {
-    //         *adr
-    //     } else { panic!("dest operand must be set first"); };
-        
-    //     if let Ok(value) = lhs.parse::<num>() {
-    //         self.movptr(rhs);
-    //         for _ in 0..value {
-    //             self.out.push('+');
-    //         }
-    //     } else if let Some(adr) = self.env.get(lhs) {
-    //         let lhs = *adr;
-    //         self.add(lhs, rhs);
-    //     } else { panic!("src parameter is undefined"); }
-    // }
-
-    // fn parse_sub(&mut self, lhs: &str, rhs: &str) {
-    //     let rhs = if rhs.parse::<num>().is_ok() {
-    //         panic!("cannot input number as dest for sub");
-    //     } else if let Some(adr) = self.env.get(rhs) {
-    //         *adr
-    //     } else { panic!("dest operand must be set first"); };
-        
-    //     if let Ok(value) = lhs.parse::<num>() {
-    //         self.movptr(rhs);
-    //         for _ in 0..value {
-    //             self.out.push('-');
-    //         }
-    //     } else if let Some(adr) = self.env.get(lhs) {
-    //         let lhs = *adr;
-    //         if lhs == rhs {
-    //             self.set(rhs, 0);
-    //         } else {
-    //             self.sub(lhs, rhs);
-    //         }
-    //     } else { panic!("src parameter is undefined"); }
-    // }
-
-    // fn parse_mul(&mut self, lhs: &str, rhs: &str) {
-    //     let rhs = if rhs.parse::<num>().is_ok() {
-    //         panic!("cannot input number as dest for mul");
-    //     } else if let Some(adr) = self.env.get(rhs) {
-    //         *adr
-    //     } else { panic!("dest operand must be set first"); };
-        
-    //     if let Ok(value) = lhs.parse::<num>() {
-    //         if value == 0 {
-    //             self.set(rhs, 0);
-    //         } else {
-    //             let temp = self.alloc(1);
-    //             self.cpy(rhs, temp);
-    //             for _ in 0..value - 1 {
-    //                 self.add(temp, rhs);
-    //             }
-    //         }
-    //     } else if let Some(adr) = self.env.get(lhs) {
-    //         let lhs = *adr;
-    //         self.mul(lhs, rhs);
-    //     } else { panic!("src parameter is undefined"); }
-    // }
-
-    // fn parse_putd(&mut self, adr: usize) {
-
-    // }
-
-    // fn parse_puts(&mut self, arg: &str) {
-    //     if arg.starts_with('\'') {
-    //         let temp = self.alloc(1);
-    //         for c in arg[1..].chars() {
-    //             self.set(temp, c as u8);
-    //             self.movptr(temp);
-    //             self.out.push('.');
-    //         }
-    //         self.free(temp);
-    //     } else if let Some(adr) = self.env.get(arg) {
-    //         let adr = *adr;
-    //         self.movptr(adr);
-    //         self.out.push('.');
-    //     } else {
-    //         panic!("variable not set");
-    //     }
-    // }
-
-    // /// Tests if `lhs` is equal to `rhs`. Ends with pointer on the result.
-    // fn parse_teq(&mut self, lhs: &str, rhs: &str) {
-    //     let lhs = if let Some(adr) = self.env.get(lhs) {
-    //         *adr
-    //     } else {
-    //         panic!("lhs is not defined");
-    //     };
-
-        
-    // }
 }
  

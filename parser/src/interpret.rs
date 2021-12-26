@@ -9,7 +9,7 @@ pub fn run(filepath: &str) {
 
     while interpreter.step() {
         println!("{}\n", interpreter);
-        std::thread::sleep(std::time::Duration::from_millis(1000 / 9));
+        // std::thread::sleep(std::time::Duration::from_millis(1000 / 1000));
     }
 }
 
@@ -133,7 +133,7 @@ impl fmt::Display for Interpreter {
         for (i, c) in self.instructions.iter().enumerate() {
             if i % WIDTH == 0 {
                 if self.instruction_ptr >= i && self.instruction_ptr < i + WIDTH {
-                    writeln!(f, "\n{:>1$}", "V", self.instruction_ptr % WIDTH + 1)?;
+                    writeln!(f, "\n{:>1$}", "v", self.instruction_ptr % WIDTH + 1)?;
                 } else {
                     writeln!(f, "")?;
                 }
