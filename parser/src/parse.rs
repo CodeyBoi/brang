@@ -155,7 +155,23 @@ impl Parser {
             StrLit(s) => {
                 let temp = self.calloc(1);
                 let mut last_c = 0_u8;
-                for c in s.chars() {
+                let mut chars = s.chars();
+                while let Some(c) = chars.next() {
+                    let c = if c == '\\' {
+                        match chars.next() {
+                            Some('n') => '\n',
+                            Some('r') => '\r',
+                            Some('t') => '\t',
+                            Some('"') => '\"',
+                            Some('\'') => '\'',
+                            Some('\\') => '\\',
+                            Some(esc) => esc,
+                            None => {
+                                eprintln!("Error: string literal ended with escape character '\\'");
+                                c
+                            }
+                        }
+                    } else { c };
                     let c = c as u8;
                     if c >= last_c {
                         self.addconst(c - last_c, temp);

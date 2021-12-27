@@ -8,9 +8,3 @@ if a < b {
 } else {
     print "a==b";
 }
-
-enum DataType {
-    Num,
-    Str,
-    Array,
-}
