@@ -135,7 +135,7 @@ pub fn tokenize(program: String) -> VecDeque<Token> {
         (For,                       r"for\s"),
         // Literals
         (NumLit(0),                 r"\d+"),
-        (StrLit("".to_string()),    r#"("[^"]*"|'[^']*')"#),
+        (StrLit("".to_string()),    r#"("(\\"|[^"])*"|'(\\'|[^'])*')"#),
         // Identifiers
         (Ident("".to_string()),     r"[\pL][\pL\d]*"),
         // Unary operators
