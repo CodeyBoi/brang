@@ -8,9 +8,24 @@ use crate::token::Node;
 use crate::token::Token;
 
 pub fn to_brainfuck(root: Node, output: &str) -> Result<(), std::io::Error> {
-    let mut c = Parser::new();
-    
-    c.process_node(&root);
+
+    const CODE_WIDTH: usize = 80;
+
+    let mut compiler = Compiler::new();   
+    compiler.process_node(&root);
+
+    let out_capacity = compiler.out.len() + compiler.out.len() / CODE_WIDTH + 1;
+    let mut out = String::with_capacity(out_capacity);
+
+    for (i, ch) in compiler.out.chars().enumerate() {
+        if i != 0 && i % CODE_WIDTH == 0 {
+            out.push('\n');
+        }
+        out.push(ch);
+    }
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
 
     let mut file = OpenOptions::new()
         .write(true)
@@ -18,18 +33,18 @@ pub fn to_brainfuck(root: Node, output: &str) -> Result<(), std::io::Error> {
         .truncate(true)
         .open(output)?;
     
-    write!(file, "{}", c.out)?;
+    write!(file, "{}", out)?;
     Ok(())
 }
 
-struct Parser {
+struct Compiler {
     ptr:    usize,
     env:    HashMap<String, usize>,
     allocd: HashMap<usize, usize>,
     out:    String,
 }
 
-impl Parser {
+impl Compiler {
 
     const ARRAY_SIZE: usize = 30_000;
 
@@ -39,9 +54,10 @@ impl Parser {
         use Token::*;
         for n in &node.children {
             match n {
-                Node { token: Branch, .. } => self.process_branch(n),
-                Node { token: Assign, .. } => self.process_assign(n),
-                Node { token: Print,  .. } => self.process_print(n),
+                Node { token: Branch,  .. } => self.process_branch(n),
+                Node { token: Assign,  .. } => self.process_assign(n),
+                Node { token: Print,   .. } => self.process_print(n),
+                Node { token: GetChar, .. } => self.process_getchar(n),
                 _ => unimplemented!("{:?}", n.token),
             }
         }
@@ -79,7 +95,7 @@ impl Parser {
 
     fn process_assign(&mut self, node: &Node) {
         let adr = if let Token::Ident(name) = &node.children[0].token {
-            self.assign(name)
+            self.assign_byte(name)
         } else { panic!("no identifier in assign block") };
         self.process_expr_node(&node.children[1], adr);
     }
@@ -148,6 +164,14 @@ impl Parser {
         self.dealloc(stack);
     }
 
+    fn process_getchar(&mut self, node: &Node) {
+        let adr = if let Token::Ident(name) = &node.children[0].token {
+            self.assign_byte(name)
+        } else { panic!("no identifier in getchar node") };
+        self.mov(adr);
+        self.out.push(',');
+    }
+
     fn process_print(&mut self, node: &Node) {
         use Token::*;
         let child_node = node.children.first().unwrap();
@@ -155,23 +179,7 @@ impl Parser {
             StrLit(s) => {
                 let temp = self.calloc(1);
                 let mut last_c = 0_u8;
-                let mut chars = s.chars();
-                while let Some(c) = chars.next() {
-                    let c = if c == '\\' {
-                        match chars.next() {
-                            Some('n') => '\n',
-                            Some('r') => '\r',
-                            Some('t') => '\t',
-                            Some('"') => '\"',
-                            Some('\'') => '\'',
-                            Some('\\') => '\\',
-                            Some(esc) => esc,
-                            None => {
-                                eprintln!("Error: string literal ended with escape character '\\'");
-                                c
-                            }
-                        }
-                    } else { c };
+                for c in s.chars() {
                     let c = c as u8;
                     if c >= last_c {
                         self.addconst(c - last_c, temp);
@@ -251,7 +259,7 @@ impl Parser {
 
     /// Assigns the value `val` to the variable name `name` 
     /// and adds it to `env` if not already present.
-    fn assign(&mut self, name: &str) -> usize {
+    fn assign_byte(&mut self, name: &str) -> usize {
         if let Some(temp) = self.env.get(name) {
             *temp
         } else {
@@ -259,6 +267,10 @@ impl Parser {
             self.env.insert(name.to_string(), temp);
             temp
         }
+    }
+
+    fn assign_array(&mut self, name: &str, size: usize) {
+        
     }
 
     /// Dealloc's a variable and removes it from `env`.

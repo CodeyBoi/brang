@@ -1,12 +1,14 @@
-a = 5;
-b = 4;
+print "input: ";
 
-print "\"please\nlet\nthis\nbe\non\ndifferent\nlines\n\"";
+var a;
+getchar a;
 
-if a < b {
-    print "a<b";
+if a < b == true {
+    print("a<b\n");
 } else if a > b {
-    print "a>b";
+    print("a>b\n");
 } else {
-    print "a==b";
+    print("a=b\n");
 }
+
+b = 25;

@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::fmt;
 
-use crate::parse::num;
+use crate::compile::num;
 use regex::Regex;
 use Token::*;
 
@@ -124,8 +124,8 @@ pub fn tokenize(program: String) -> VecDeque<Token> {
     let patterns: [(Token, &'static str); 22] = [
         // Std functions
         (Print,                     r"print\s"),
-        (GetLine,                   r"input\(\)"),
-        (GetChar,                   r"getchar\(\)"),
+        (GetLine,                   r"getline\s"),
+        (GetChar,                   r"getchar\s"),
         // Keywords
         (FuncSig,                   r"fun\s"),
         (VarSig,                    r"var\s"),
@@ -174,10 +174,29 @@ pub fn tokenize(program: String) -> VecDeque<Token> {
                             .expect("Error while parsing numeric literal."),
                     )),
                     StrLit(_) => {
-                        let mut strlit = m.as_str().chars();
-                        strlit.next();
-                        strlit.next_back();
-                        tokens.push_back(StrLit(strlit.as_str().to_string()));
+                        let mut chars = m.as_str().chars();
+                        chars.next();
+                        chars.next_back();
+                        let mut strlit = String::new();
+                        while let Some(c) = chars.next() {
+                            let c = if c == '\\' {
+                                match chars.next() {
+                                    Some('n') => '\n',
+                                    Some('r') => '\r',
+                                    Some('t') => '\t',
+                                    Some('"') => '\"',
+                                    Some('\'') => '\'',
+                                    Some('\\') => '\\',
+                                    Some(anything) => anything,
+                                    None => {
+                                        eprintln!("Error: string literal ended with escape character '\\'");
+                                        c
+                                    }
+                                }
+                            } else { c };
+                            strlit.push(c);
+                        }
+                        tokens.push_back(StrLit(strlit));
                     },
                     Ident(_) => tokens.push_back(Ident(m.as_str().to_string())),
                     BinOp(_) => tokens.push_back(BinOp(BiOp::from(m.as_str()))),
@@ -256,6 +275,7 @@ fn parse_next(tokens: &mut VecDeque<Token>) -> Option<Node> {
             If => return Some(parse_branch(tokens)),
             VarSig | Ident { .. } => return Some(parse_assign(tokens)),
             Print => return Some(parse_print(tokens)),
+            GetChar | GetLine => return Some(parse_input(tokens)),
             Else => {
                 eprintln!("else-statement must come after an if-statement");
                 return None;
@@ -272,6 +292,19 @@ fn parse_next(tokens: &mut VecDeque<Token>) -> Option<Node> {
         }
     }
     None
+}
+
+fn parse_input(tokens: &mut VecDeque<Token>) -> Node {
+    let input_type = tokens.pop_front().unwrap();
+    let var = tokens.pop_front();
+    let var = if let Some(Ident(_)) = var {
+        Node::leaf(var.unwrap())
+    } else { panic!("expected identifier after `getchar`") };
+    if let Some(Semicolon) = tokens.pop_front() {
+        Node::new(input_type, vec![var])
+    } else {
+        panic!("expected `;`")
+    }
 }
 
 fn parse_branch(tokens: &mut VecDeque<Token>) -> Node {

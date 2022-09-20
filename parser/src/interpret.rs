@@ -9,7 +9,7 @@ pub fn run(filepath: &str) {
 
     while interpreter.step() {
         println!("{}\n", interpreter);
-        // std::thread::sleep(std::time::Duration::from_millis(1000 / 1000));
+        std::thread::sleep(std::time::Duration::from_millis(1000 / 50));
     }
 }
 
@@ -29,7 +29,15 @@ impl Interpreter {
         let mut code = String::new();
         file.read_to_string(&mut code)
             .expect("could not read file to string");
-        let instructions: Vec<char> = code.chars().collect();
+        
+        let mut instructions = Vec::with_capacity(code.len());
+
+        for ch in code.chars() {
+            if let '>'|'<'|'+'|'-'|','|'.'|'['|']' = ch {
+                instructions.push(ch);
+            }
+        }
+
         Self {
             memory:          vec![0; 1],
             memory_ptr:      0,
@@ -90,7 +98,7 @@ impl Interpreter {
                     self.brackets.pop();
                 }
             }
-            _ => self.instruction_ptr += 1,
+            _ => (),
         }
         self.instruction_ptr += 1;
         true
@@ -137,7 +145,7 @@ impl fmt::Display for Interpreter {
                 } else {
                     writeln!(f, "")?;
                 }
-            }
+            } 
             write!(f, "{}", c)?;
         }
 

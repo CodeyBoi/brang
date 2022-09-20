@@ -4,7 +4,7 @@ var b = expr * (4 - 2);
 
 var c = 0;
 
-if b >= 8 {				# Nested loops!!
+if b >= 8 {				// Nested loops!!
 	if b < 15 {
 		c = 2*(5-2);
 	} else if b < 14 {
@@ -15,4 +15,3 @@ if b >= 8 {				# Nested loops!!
 } else {
 	c = 10;
 }
-
