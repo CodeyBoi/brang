@@ -4,3 +4,5 @@ __pycache__
 **.bf
 **.out
 .vscode
+**.o
+bfparse/app
